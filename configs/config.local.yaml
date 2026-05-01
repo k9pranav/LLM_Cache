@@ -1,0 +1,41 @@
+app:
+  name: llm-cache
+  env: local
+
+server:
+  host: "0.0.0.0"
+  port: 8080
+  read_timeout_seconds: 30
+  write_timeout_seconds: 30
+
+redis:
+  addr: "localhost:6379"
+  username: ""
+  password: ""
+  db: 0
+
+cache: 
+  enabled: true
+  similarity_threshold: 0.85
+  ttl_seconds: 86400
+
+enbedder:
+  provider: "ollama"
+  model: "mxbai-embed-large"
+
+llm:
+  provider: "openai"
+  base_url: "https://api.openai.com/v1"
+  api_key: ""
+  model: "gpt-4o-mini"
+
+logging:
+  level: "debug"
+  format: "console"
+
+metrics:
+  enabled: true
+  path: "/metrics"
+
+health:
+  path: "/healthz"
