@@ -40,6 +40,10 @@ type Config struct {
 		BaseURL  string `mapstructure:"base_url"`
 	} `mapstructure:"embedder"`
 
+	Normalizer struct {
+		FillerPhrases []string `mapstructure:"filler_phrases"`
+	} `mapstructure:"normalizer"`
+
 	LLM struct {
 		Provider string `mapstructure:"provider"`
 		BaseURL  string `mapstructure:"base_url"`

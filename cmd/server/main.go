@@ -15,10 +15,10 @@ func main() {
 
 	//Calling LoadConfig function to get
 	cfg, err := config.LoadConfig()
+
 	if err != nil {
 		log.Fatal("failed to load config: ", err)
 	}
-
 	r := gin.Default()
 
 	r.GET(cfg.Health.Path, func(c *gin.Context) {

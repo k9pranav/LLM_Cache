@@ -39,3 +39,28 @@ metrics:
 
 health:
   path: "/healthz"
+
+normalizer:
+  filler_phrases:
+    - please
+    - pls
+    - kindly
+    - hey
+    - hi
+    - hello
+    - can you
+    - could you
+    - would you
+    - can you please
+    - could you please
+    - would you please
+    - i want to
+    - i need to
+    - i would like to
+    - i am trying to
+    - im trying to
+    - i was wondering if you could
+    - do you know how to
+    - help me
+    - explain to me
+    - tell me about
