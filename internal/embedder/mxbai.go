@@ -9,15 +9,25 @@ import (
 )
 
 // Holds base URL, model name, http client
-type MxbaiEmbedder struct {
+type Embedder struct {
 	BaseURL string
 	Model   string
 	Client  *http.Client //http client; uses embedRequest
 }
 
+func CreateEmbedder(BaseURL string, model string) *Embedder {
+	return &Embedder{
+		BaseURL: BaseURL,
+		Model:   model,
+		Client: &http.Client{
+			Timeout: 30 * time.Second,
+		},
+	}
+}
+
 // Function that returns MxbaiEmbedder with the ollama specs
-func NewMxbaiEmbedder() *MxbaiEmbedder {
-	return &MxbaiEmbedder{
+func NewMxbaiEmbedder() *Embedder {
+	return &Embedder{
 		BaseURL: "http://localhost:11434",
 		Model:   "mxbai-embed-large",
 		Client: &http.Client{
@@ -36,7 +46,7 @@ type embedResponse struct {
 	Embeddings [][]float64 `json:"embeddings"`
 }
 
-func (e *MxbaiEmbedder) Embed(text string) ([]float64, error) {
+func (e *Embedder) Embed(text string) ([]float64, error) {
 	var reqBody embedRequest = embedRequest{
 		Model: e.Model,
 		Input: text,
@@ -60,7 +70,7 @@ func (e *MxbaiEmbedder) Embed(text string) ([]float64, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("ollama embed failed with status %s", resp.Status)
+		return nil, fmt.Errorf("embed api failed with status %s", resp.Status)
 	}
 
 	var result embedResponse

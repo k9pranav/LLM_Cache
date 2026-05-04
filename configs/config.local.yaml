@@ -19,9 +19,10 @@ cache:
   similarity_threshold: 0.85
   ttl_seconds: 86400
 
-enbedder:
+embedder:
   provider: "ollama"
   model: "mxbai-embed-large"
+  base_url: "http://localhost:11434"
 
 llm:
   provider: "openai"

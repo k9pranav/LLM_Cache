@@ -1,4 +1,8 @@
-//One chat message
+package types
+
+import "time"
+
+// One chat message
 type Message struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`

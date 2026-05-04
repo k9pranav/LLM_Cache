@@ -33,7 +33,7 @@ func main() {
 
 	log.Printf("server listening on %s\n", addr)
 
-	new_embed_request := embedder.NewMxbaiEmbedder()
+	new_embed_request := embedder.CreateEmbedder(cfg.Embedder.BaseURL, cfg.Embedder.Model)
 	vector, err := new_embed_request.Embed("What is the capital of France?")
 
 	r.GET("/embed", func(c *gin.Context) {
