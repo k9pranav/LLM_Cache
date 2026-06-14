@@ -9,7 +9,7 @@ server:
   write_timeout_seconds: 30
 
 redis:
-  addr: "localhost:6379"
+  addr: "redis-cache:6379"
   username: ""
   password: ""
   db: 0
@@ -22,7 +22,7 @@ cache:
 embedder:
   provider: "ollama"
   model: "mxbai-embed-large"
-  base_url: "http://localhost:11434"
+  base_url: "http://ollama-cache:11434"
 
 llm:
   provider: "openai"

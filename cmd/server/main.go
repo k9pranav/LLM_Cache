@@ -4,91 +4,95 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"net/http"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"github.com/k9pranav/LLM_Cache/internal/cache"
+	"github.com/k9pranav/LLM_Cache/internal/config"
+	"github.com/k9pranav/LLM_Cache/internal/embedder"
+	"github.com/k9pranav/LLM_Cache/internal/normalizer"
+	"github.com/k9pranav/LLM_Cache/pkg/types"
 )
 
 func main() {
-	fmt.Println("LLM Cache Gateway starting...")
-
-	//Calling LoadConfig function to get
-	// cfg, err := config.LoadConfig()
-
-	// if err != nil {
-	// 	log.Fatal("failed to load config: ", err)
-	// }
-	r := gin.Default()
-
-	// r.GET(cfg.Health.Path, func(c *gin.Context) {
-	// 	c.JSON(http.StatusOK, gin.H{
-	// 		"status": "ok",
-	// 		"app":    cfg.App.Name,
-	// 		"env":    cfg.App.Env,
-	// 	})
-	// })
-
-	// addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
-
-	// log.Printf("server listening on %s\n", addr)
-
-	// new_embed_request := embedder.CreateEmbedder(cfg.Embedder.BaseURL, cfg.Embedder.Model)
-	// vector, err := new_embed_request.Embed("What is the capital of France?")
-
-	// r.GET("/embed", func(c *gin.Context) {
-	// 	c.JSON(http.StatusOK, gin.H{
-	// 		"status":    "ok",
-	// 		"my_vector": vector,
-	// 	})
-	// })
-
-	// if err := r.Run(addr); err != nil {
-	// 	log.Fatal("server failed: ", err)
-	// }
-
 	ctx := context.Background()
 
-	redisCache := cache.NewRedisCache("redis-cache:6379", "", 0)
+	cfg, err := config.LoadConfig()
+
+	if err != nil {
+		log.Fatal("Failed to load config:", err)
+	}
+
+	redisCache := cache.NewRedisCache(
+		cfg.Redis.Addr,
+		cfg.Redis.Password,
+		cfg.Redis.DB,
+	)
 
 	if err := redisCache.Ping(ctx); err != nil {
-		log.Fatal("failed to connec to Redis: ", err)
+		log.Fatal("redis ping failed:", err)
 	}
 
-	fmt.Println("Connected to Redis")
-
-	r.GET("/redis-test", func(c *gin.Context) {
-
-		ctx := c.Request.Context()
-
-		err := redisCache.Set(ctx, "hello", "world", 5*time.Minute)
-
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"error": err.Error(),
-			})
-
-			return
-		}
-
-		value, err := redisCache.Get(ctx, "hello")
-
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"error": err.Error(),
-			})
-
-			return
-		}
-
-		c.JSON(http.StatusOK, gin.H{
-			"value": value,
-		})
-	})
-
-	if err := r.Run("0.0.0.0:8080"); err != nil {
-		log.Fatal("server failed: ", err)
+	if err := redisCache.CreateIndex(ctx, 1024); err != nil {
+		log.Fatal("failed to create redis vector index:", err)
 	}
+
+	//My embedder
+	mxbai := embedder.CreateEmbedder(
+		cfg.Embedder.BaseURL,
+		cfg.Embedder.Model,
+	)
+
+	stripper := normalizer.NewFillerStripper(cfg.Normalizer.FillerPhrases)
+
+	semanticCache := cache.NewSemanticCache(
+		redisCache, mxbai, stripper, cfg.Cache.SimilarityThreshold, time.Duration(cfg.Cache.TTLSeconds)*time.Second,
+	)
+
+	firstReq := types.QueryRequest{
+		TenantID: "tenant-a",
+		Provider: "fake-provider",
+		Model:    "fake-model",
+		Messages: []types.Message{
+			{Role: "system", Content: "You are a helpful technical assistant."},
+			{Role: "user", Content: "Explain Redis vector search."},
+		},
+	}
+
+	fakeLLMResp := types.LLMResponse{
+		Content:  "Redis vector search lets you find stored items meaning using embeddings",
+		Provider: "fake-provider",
+		Model:    "fake-model",
+	}
+
+	if err := semanticCache.Store(ctx, firstReq, fakeLLMResp); err != nil {
+		log.Fatal("failed to store cache entry:", err)
+	}
+
+	secondReq := types.QueryRequest{
+		TenantID: "tenant-a",
+		Provider: "fake-provider",
+		Model:    "fake-model",
+		Messages: []types.Message{
+			{Role: "system", Content: "You are a helpful technical assistant."},
+			{Role: "user", Content: "How does Redis vector database work?"},
+		},
+	}
+
+	resp, decision, err := semanticCache.Lookup(ctx, secondReq)
+
+	if err != nil {
+		log.Fatal("lookup failed:", err)
+	}
+
+	if decision.Hit {
+		fmt.Println("CACHE HIT")
+		fmt.Println("Hit type:", decision.HitType)
+		fmt.Println("Similarity:", decision.Similarity)
+		fmt.Println("Response:", resp.Content)
+		return
+	}
+
+	fmt.Println("CACHE MISS")
+	fmt.Println("Reason:", decision.Reason)
 
 }
