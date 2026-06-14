@@ -65,3 +65,33 @@ normalizer:
     - help me
     - explain to me
     - tell me about
+
+policy: 
+  min_response_char: 20
+  min_total_tokens: 5
+  hedging_phrases:
+    - it depends
+	  - depends on
+	  - depending on
+	  - what if
+	  - if i
+	  - if we
+	  - if they
+	  - assuming
+	  - suppose
+	  - let's say
+	  - lets say
+    - for me
+	  - my case
+	  - in my case
+	  - based on my
+	  - given my
+	  - my situation
+	  - my code
+	  - my file
+	  - my project
+  	- my setup
+	  - my environment
+	  - my config
+	  - my database
+	  - my pipeline

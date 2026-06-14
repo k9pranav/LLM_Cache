@@ -64,6 +64,12 @@ type Config struct {
 	Health struct {
 		Path string `mapstructure:"path"`
 	} `mapstructure:"health"`
+
+	Policy struct {
+		MinResponseChar int      `mapstructure:"min_response_chat"`
+		MinTotalTokens  int      `mapstructure:"min_total_tokens"`
+		HedgingPhrases  []string `mapstructure:"hedging_phrases"`
+	} `mapstructure:"policy"`
 }
 
 // Reads YAML converts it to config struct

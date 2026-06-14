@@ -7,6 +7,7 @@ import (
 
 	"github.com/k9pranav/LLM_Cache/internal/conversation"
 	"github.com/k9pranav/LLM_Cache/internal/normalizer"
+	"github.com/k9pranav/LLM_Cache/internal/policy"
 	"github.com/k9pranav/LLM_Cache/pkg/types"
 	"github.com/redis/go-redis/v9"
 )
@@ -23,6 +24,7 @@ type SemanticCache struct {
 	TTL                 time.Duration
 	TopK                int
 	LastNMessages       int
+	Policy              *policy.Policy
 }
 
 func NewSemanticCache(
@@ -31,6 +33,7 @@ func NewSemanticCache(
 	stripper *normalizer.FillerStripper,
 	similarityThreshold float64,
 	ttl time.Duration,
+	policy *policy.Policy,
 ) *SemanticCache {
 	return &SemanticCache{
 		Redis:               redisCache,
@@ -40,6 +43,7 @@ func NewSemanticCache(
 		TTL:                 ttl,
 		TopK:                5,
 		LastNMessages:       4,
+		Policy:              policy,
 	}
 }
 
@@ -108,6 +112,13 @@ func (c *SemanticCache) Store(
 	req types.QueryRequest,
 	resp types.LLMResponse,
 ) error {
+
+	//Calling policy, checking if the LLM response meets the policy requirements to be stored in cache
+	//IF I WANT TO DEACTIVATE POLICY, REMOVE THIS IF STATEMENT
+	if c.Policy != nil && c.Policy.ShouldCache(resp) == false {
+		return nil
+	}
+
 	nq := conversation.BuildLastNContext(req.Messages, c.Stripper, c.LastNMessages)
 
 	vector64, err := c.Embedder.Embed(nq.SemanticText)
