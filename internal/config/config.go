@@ -6,6 +6,19 @@ import (
 	"github.com/spf13/viper"
 )
 
+type LLMConfig struct {
+	Provider string `mapstructure:"provider"`
+	BaseURL  string `mapstructure:"base_url"`
+	APIKey   string `mapstructure:"api_key"`
+	Model    string `mapstructure:"model"`
+}
+
+type PolicyConfig struct {
+	MinResponseChar int      `mapstructure:"min_response_char"`
+	MinTotalTokens  int      `mapstructure:"min_total_tokens"`
+	HedgingPhrases  []string `mapstructure:"hedging_phrases"`
+}
+
 // Go version of the YAML file; a struct
 // Helps viper load the YAML file
 type Config struct {
@@ -66,7 +79,7 @@ type Config struct {
 	} `mapstructure:"health"`
 
 	Policy struct {
-		MinResponseChar int      `mapstructure:"min_response_chat"`
+		MinResponseChar int      `mapstructure:"min_response_char"`
 		MinTotalTokens  int      `mapstructure:"min_total_tokens"`
 		HedgingPhrases  []string `mapstructure:"hedging_phrases"`
 	} `mapstructure:"policy"`

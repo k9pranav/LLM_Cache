@@ -26,9 +26,9 @@ embedder:
 
 llm:
   provider: "openai"
-  base_url: "https://api.openai.com/v1"
-  api_key: ""
-  model: "gpt-4o-mini"
+  base_url: "http://localhost:11434/v1"
+  api_key: "ollama"
+  model: "qwen2.5:0.5b"
 
 logging:
   level: "debug"
@@ -71,27 +71,9 @@ policy:
   min_total_tokens: 5
   hedging_phrases:
     - it depends
-	  - depends on
-	  - depending on
-	  - what if
-	  - if i
-	  - if we
-	  - if they
-	  - assuming
-	  - suppose
-	  - let's say
-	  - lets say
-    - for me
-	  - my case
-	  - in my case
-	  - based on my
-	  - given my
-	  - my situation
-	  - my code
-	  - my file
-	  - my project
-  	- my setup
-	  - my environment
-	  - my config
-	  - my database
-	  - my pipeline
+    - depends on
+    - depending on
+    - assuming
+    - suppose
+    - let's say
+    - lets say
