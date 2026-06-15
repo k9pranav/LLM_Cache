@@ -1,3 +1,5 @@
+//Implements the provider.go interface for openAI-compatible LLM calls
+
 package providers
 
 import (

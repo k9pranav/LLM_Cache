@@ -16,7 +16,7 @@ redis:
 
 cache: 
   enabled: true
-  similarity_threshold: 0.85
+  similarity_threshold: 0.5
   ttl_seconds: 86400
 
 embedder:
@@ -26,7 +26,7 @@ embedder:
 
 llm:
   provider: "openai"
-  base_url: "http://localhost:11434/v1"
+  base_url: "http://ollama-cache:11434/v1"
   api_key: "ollama"
   model: "qwen2.5:0.5b"
 
