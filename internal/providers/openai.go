@@ -3,6 +3,7 @@
 package providers
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -26,6 +27,7 @@ type openAIChatRequest struct {
 	Model       string          `json:"model"`
 	Messages    []openAIMessage `json:"messages"`
 	Temperature *float64        `json:"temperature,omitempty"`
+	Stream      bool
 }
 
 type openAIMessage struct {
@@ -48,6 +50,162 @@ type openAIChatResponse struct {
 		CompletionTokens int `json:"completion_tokens"`
 		TotalTokens      int `json:"total_tokens"`
 	} `json:"usage"`
+}
+
+type openAIStreamResponse struct {
+	Model string `json:"model"`
+
+	Choices []struct {
+		Delta struct {
+			Role    string `json:"role,omitempty"`
+			Content string `json:"content,omitempty"`
+		} `json:"delta"`
+
+		FinishReason *string `json:"finish_reason"`
+	} `json:"choices"`
+}
+
+func (p *OpenAIProvider) StreamComplete(ctx context.Context, req types.QueryRequest) (<-chan StreamChunk, error) {
+	if p.APIKey == "" {
+		return nil, fmt.Errorf("open ai key is empty")
+	}
+
+	model := req.Model
+	if model == "" {
+		model = p.DefaultModel
+	}
+
+	if len(req.Messages) == 0 {
+		return nil, fmt.Errorf("request has no messages")
+	}
+
+	messages := make([]openAIMessage, 0, len(req.Messages))
+	for _, msg := range req.Messages {
+		messages = append(messages, openAIMessage{
+			Role:    msg.Role,
+			Content: msg.Content,
+		})
+	}
+
+	body := openAIChatRequest{
+		Model:    model,
+		Messages: messages,
+		Stream:   true,
+	}
+
+	if req.Temperature != 0 {
+		body.Temperature = &req.Temperature
+	}
+
+	bodyBytes, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+
+	httpReq, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		p.BaseURL+"/chat/completions",
+		bytes.NewReader(bodyBytes),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+p.APIKey)
+
+	httpResp, err := p.HTTPClient.Do(httpReq)
+	if err != nil {
+		return nil, err
+	}
+
+	if httpResp.StatusCode >= 300 {
+		defer httpResp.Body.Close()
+
+		respBytes, readErr := io.ReadAll(httpResp.Body)
+		if readErr != nil {
+			return nil, readErr
+		}
+
+		return nil, fmt.Errorf(
+			"openai stream request failed: status=%d body=%s",
+			httpResp.StatusCode,
+			string(respBytes),
+		)
+	}
+
+	out := make(chan StreamChunk)
+
+	go func() {
+		defer close(out)
+		defer httpResp.Body.Close()
+
+		scanner := bufio.NewScanner(httpResp.Body)
+		scanner.Buffer(make([]byte, 1024), 1024*1024)
+
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+
+			if line == "" {
+				continue
+			}
+
+			if !strings.HasPrefix(line, "data:") {
+				continue
+			}
+
+			data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+
+			if data == "[DONE]" {
+				out <- StreamChunk{
+					Model: model,
+					Done:  true,
+				}
+				return
+			}
+
+			var parsed openAIStreamResponse
+			if err := json.Unmarshal([]byte(data), &parsed); err != nil {
+				out <- StreamChunk{Err: err}
+				return
+			}
+
+			responseModel := parsed.Model
+			if responseModel == "" {
+				responseModel = model
+			}
+
+			if len(parsed.Choices) == 0 {
+				continue
+			}
+
+			choice := parsed.Choices[0]
+
+			if choice.Delta.Content != "" {
+				out <- StreamChunk{
+					Content: choice.Delta.Content,
+					Model:   responseModel,
+				}
+			}
+
+			if choice.FinishReason != nil {
+				out <- StreamChunk{
+					FinishReason: *choice.FinishReason,
+					Model:        responseModel,
+					Done:         true,
+				}
+				return
+			}
+		}
+
+		if err := scanner.Err(); err != nil {
+			out <- StreamChunk{Err: err}
+		}
+	}()
+
+	return out, nil
+
 }
 
 func NewOpenAIProvider(apiKey string, baseURL string, model string) *OpenAIProvider {
