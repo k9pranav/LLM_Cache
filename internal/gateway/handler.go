@@ -10,6 +10,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode"
 
 	"github.com/gin-gonic/gin"
 	"github.com/k9pranav/LLM_Cache/internal/cache"
@@ -61,6 +62,16 @@ type chatCompletionStreamChoice struct {
 type chatCompletionStreamDelta struct {
 	Role    string `json:"role,omitempty"`
 	Content string `json:"content,omitempty"`
+}
+
+type askRequest struct {
+	Prompt      string            `json:"prompt"`
+	System      string            `json:"system,omitempty"`
+	Provider    string            `json:"provider,omitempty"`
+	Model       string            `json:"model,omitempty"`
+	Temperature float64           `json:"temperature,omitempty"`
+	Metadata    map[string]string `json:"metadata,omitempty"`
+	Stream      bool              `json:"stream,omitempty"`
 }
 
 func NewHandler(
@@ -426,8 +437,16 @@ func (h *Handler) writeCachedStream(c *gin.Context, resp types.LLMResponse) {
 	streamID := fmt.Sprintf("chatcmpl-%d", time.Now().UnixNano())
 	created := time.Now().Unix()
 
-	if err := writeSSEContentChunk(c, streamID, created, resp.Model, resp.Content); err != nil {
-		log.Printf("failed writing cached SSE content chunk: %v", err)
+	err := streamTextInChunks(
+		resp.Content,
+		25*time.Millisecond,
+		func(part string) error {
+			return writeSSEContentChunk(c, streamID, created, resp.Model, part)
+		},
+	)
+
+	if err != nil {
+		log.Printf("failed writing cached SSE content chunks: %v", err)
 		return
 	}
 
@@ -559,4 +578,273 @@ func openAICompatibleResponse(resp types.LLMResponse) chatCompletionResponse {
 			TotalTokens:      resp.TotalTokens,
 		},
 	}
+}
+func (h *Handler) buildAskQueryRequest(c *gin.Context, input askRequest) types.QueryRequest {
+	provider := input.Provider
+	if provider == "" {
+		provider = h.DefaultProvider
+	}
+
+	model := input.Model
+	if model == "" {
+		model = h.DefaultModel
+	}
+
+	systemPrompt := input.System
+	if systemPrompt == "" {
+		systemPrompt = "You are a helpful technical assistant."
+	}
+
+	tenantID := c.GetString(ContextTenantIDKey)
+	if tenantID == "" {
+		tenantID = "default"
+	}
+
+	userID := c.GetString(ContextUserIDKey)
+
+	return types.QueryRequest{
+		TenantID: tenantID,
+		UserID:   userID,
+		Provider: provider,
+		Model:    model,
+		Messages: []types.Message{
+			{
+				Role:    "system",
+				Content: systemPrompt,
+			},
+			{
+				Role:    "user",
+				Content: input.Prompt,
+			},
+		},
+		Temperature: input.Temperature,
+		Metadata:    input.Metadata,
+	}
+}
+func (h *Handler) Ask(c *gin.Context) {
+	var input askRequest
+
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.String(http.StatusBadRequest, "invalid request body: %v", err)
+		return
+	}
+
+	if strings.TrimSpace(input.Prompt) == "" {
+		c.String(http.StatusBadRequest, "prompt cannot be empty")
+		return
+	}
+
+	if input.Stream {
+		req := h.buildAskQueryRequest(c, input)
+		h.askStreamInternal(c, req)
+		return
+	}
+
+	req := h.buildAskQueryRequest(c, input)
+
+	if h.Cache != nil {
+		cachedResp, decision, err := h.Cache.Lookup(c.Request.Context(), req)
+
+		if err != nil {
+			log.Printf("cache lookup failed, falling back to LLM: %v", err)
+		} else if decision.Hit && cachedResp != nil {
+			atomic.AddInt64(&h.Stats.CacheHits, 1)
+
+			c.Header("X-LLM-Cache", "HIT")
+			c.Header("X-LLM-Cache-Hit-Type", decision.HitType)
+			c.Header("X-LLM-Cache-Similarity", fmt.Sprintf("%.4f", decision.Similarity))
+
+			c.String(http.StatusOK, cachedResp.Content)
+			return
+		}
+	}
+
+	atomic.AddInt64(&h.Stats.CacheMisses, 1)
+	atomic.AddInt64(&h.Stats.LLMRequests, 1)
+
+	llmResp, err := h.LLMRouter.Route(c.Request.Context(), req)
+	if err != nil {
+		c.String(http.StatusBadGateway, "llm request failed: %v", err)
+		return
+	}
+
+	c.Header("X-LLM-Cache", "MISS")
+
+	h.storeAsync(req, llmResp)
+
+	c.String(http.StatusOK, llmResp.Content)
+}
+
+func (h *Handler) AskStream(c *gin.Context) {
+	var input askRequest
+
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.String(http.StatusBadRequest, "invalid request body: %v", err)
+		return
+	}
+
+	if strings.TrimSpace(input.Prompt) == "" {
+		c.String(http.StatusBadRequest, "prompt cannot be empty")
+		return
+	}
+
+	req := h.buildAskQueryRequest(c, input)
+	h.askStreamInternal(c, req)
+}
+
+func (h *Handler) askStreamInternal(c *gin.Context, req types.QueryRequest) {
+	if h.Cache != nil {
+		cachedResp, decision, err := h.Cache.Lookup(c.Request.Context(), req)
+
+		if err != nil {
+			log.Printf("cache lookup failed, falling back to LLM: %v", err)
+		} else if decision.Hit && cachedResp != nil {
+			atomic.AddInt64(&h.Stats.CacheHits, 1)
+
+			c.Header("X-LLM-Cache", "HIT")
+			c.Header("X-LLM-Cache-Hit-Type", decision.HitType)
+			c.Header("X-LLM-Cache-Similarity", fmt.Sprintf("%.4f", decision.Similarity))
+
+			setupPlainTextStreamHeaders(c)
+
+			err := streamTextInChunks(
+				cachedResp.Content,
+				25*time.Millisecond,
+				func(part string) error {
+					return writePlainTextChunk(c, part)
+				},
+			)
+
+			if err != nil {
+				log.Printf("failed writing cached plain text stream: %v", err)
+			}
+
+			return
+		}
+	}
+
+	atomic.AddInt64(&h.Stats.CacheMisses, 1)
+	atomic.AddInt64(&h.Stats.LLMRequests, 1)
+	atomic.AddInt64(&h.Stats.StreamingRequests, 1)
+
+	c.Header("X-LLM-Cache", "MISS")
+
+	stream, err := h.LLMRouter.RouteStream(c.Request.Context(), req)
+	if err != nil {
+		c.String(http.StatusBadGateway, "llm stream failed: %v", err)
+		return
+	}
+
+	setupPlainTextStreamHeaders(c)
+
+	var fullResponse strings.Builder
+
+	model := req.Model
+	finishReason := "stop"
+
+	for chunk := range stream {
+		if chunk.Err != nil {
+			log.Printf("llm stream chunk error: %v", chunk.Err)
+			return
+		}
+
+		if chunk.Model != "" {
+			model = chunk.Model
+		}
+
+		if chunk.Content != "" {
+			fullResponse.WriteString(chunk.Content)
+
+			if err := writePlainTextChunk(c, chunk.Content); err != nil {
+				log.Printf("failed writing plain text stream chunk: %v", err)
+				return
+			}
+
+			time.Sleep(15 * time.Millisecond)
+		}
+
+		if chunk.FinishReason != "" {
+			finishReason = chunk.FinishReason
+		}
+
+		if chunk.Done {
+			break
+		}
+	}
+
+	finalResp := types.LLMResponse{
+		Content:      fullResponse.String(),
+		Provider:     req.Provider,
+		Model:        model,
+		FinishReason: finishReason,
+	}
+
+	h.storeAsync(req, finalResp)
+}
+func setupPlainTextStreamHeaders(c *gin.Context) {
+	c.Header("Content-Type", "text/plain; charset=utf-8")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.Header("X-Accel-Buffering", "no")
+	c.Status(http.StatusOK)
+}
+
+func writePlainTextChunk(c *gin.Context, text string) error {
+	bufPtr := streamBufPool.Get().(*[]byte)
+
+	buf := (*bufPtr)[:0]
+	buf = append(buf, text...)
+
+	_, err := c.Writer.Write(buf)
+	c.Writer.Flush()
+
+	if cap(buf) > 64*1024 {
+		newBuf := make([]byte, 0, 4096)
+		*bufPtr = newBuf
+	} else {
+		*bufPtr = buf[:0]
+	}
+
+	streamBufPool.Put(bufPtr)
+
+	return err
+}
+func streamTextInChunks(text string, delay time.Duration, writeFn func(string) error) error {
+	var chunk strings.Builder
+
+	for _, r := range text {
+		chunk.WriteRune(r)
+
+		if shouldFlushTextChunk(r, chunk.Len()) {
+			if err := writeFn(chunk.String()); err != nil {
+				return err
+			}
+
+			chunk.Reset()
+
+			if delay > 0 {
+				time.Sleep(delay)
+			}
+		}
+	}
+
+	if chunk.Len() > 0 {
+		if err := writeFn(chunk.String()); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func shouldFlushTextChunk(r rune, currentLen int) bool {
+	if unicode.IsSpace(r) {
+		return true
+	}
+
+	if r == '.' || r == ',' || r == ';' || r == ':' || r == '!' || r == '?' || r == '\n' {
+		return true
+	}
+
+	return currentLen >= 24
 }

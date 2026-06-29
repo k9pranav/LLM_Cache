@@ -28,6 +28,9 @@ func NewRouter(
 
 	r.POST("/v1/chat/completions", h.ChatCompletion)
 
+	r.POST("/ask", h.Ask)
+	r.POST("/ask/stream", h.AskStream)
+
 	r.GET("/admin/stats", h.CacheStats)
 	r.GET(metricsPath, h.Metrics)
 
